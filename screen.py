@@ -2,8 +2,9 @@
 import json, subprocess, time, os
 from datetime import datetime
 
-WAKE_LOCK      = '/tmp/screen_wake_lock'
-WAKE_DURATION  = 300  # 5 minutes in seconds
+WAKE_LOCK     = '/tmp/screen_wake_lock'
+WAKE_DURATION = 300  # 5 minutes in seconds
+DRM_STATUS    = '/sys/class/drm/card0-HDMI-A-1/status'
 
 with open('/home/linbaird/kids-clock/config.json') as f:
     config = json.load(f)
@@ -33,8 +34,10 @@ if os.path.exists(WAKE_LOCK):
         except:
             pass
 
-# Decide screen state
+# Control screen
 if is_night and not wake_active:
-    subprocess.run(['vcgencmd', 'display_power', '0'])
+    subprocess.run(['sudo', 'tee', DRM_STATUS],
+                   input=b'off', stdout=subprocess.DEVNULL)
 else:
-    subprocess.run(['vcgencmd', 'display_power', '1'])
+    subprocess.run(['sudo', 'tee', DRM_STATUS],
+                   input=b'on', stdout=subprocess.DEVNULL)
