@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kids Clock</title>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;700;800&display=swap&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Nunito', sans-serif;
+    overflow: hidden;
+    user-select: none;
+    transition: background 1.2s ease;
+  }
+
+  /* ─── STARFIELD (space theme) ─── */
+  #starfield {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    display: none;
+  }
+
+  /* ─── LAYOUT ───
+     Night dimming is applied here via an inline `filter` set each
+     tick in JS (see getNightDimness). Brightness/saturation ramp
+     smoothly across NIGHT_FADE_MINS either side of a sleep-zone
+     boundary — never a hard cut. The theme-trigger button lives
+     outside .layout so it stays tappable at full visibility at night. */
+  .layout {
+    position: relative; z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(14px, 2.5vh, 28px);
+    transition: filter 4s ease;
+  }
+
+  #starfield {
+    transition: filter 4s ease;
+  }
+
+  /* ─── CLOCK CONTAINER ─── */
+  .clock-wrap {
+    position: relative;
+    width: min(78vw, 76vh, 500px);
+    aspect-ratio: 1;
+  }
+
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  /* ─── ZONE BADGE ─── */
+  .zone-badge {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 13px 26px;
+    border-radius: 60px;
+    background: rgba(255,255,255,0.08);
+    backdrop-filter: blur(8px);
+    border: 2px solid rgba(255,255,255,0.13);
+    transition: background 0.7s, border-color 0.7s;
+  }
+  .zone-emoji { font-size: clamp(1.8rem, 3.5vw, 2.4rem); line-height: 1; }
+  .zone-info  { display: flex; flex-direction: column; gap: 2px; }
+  .zone-label {
+    font-family: 'Fredoka One', cursive;
+    font-size: clamp(1.2rem, 2.8vw, 1.8rem);
+    color: #fff;
+    letter-spacing: 0.02em; line-height: 1;
+  }
+  .zone-sublabel {
+    font-size: clamp(0.7rem, 1.3vw, 0.85rem);
+    color: rgba(255,255,255,0.5);
+    font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  }
+
+  /* ─── DIGITAL TIME ─── */
+  .digital-time {
+    font-family: 'Fredoka One', cursive;
+    font-size: clamp(1.6rem, 3.5vw, 2.4rem);
+    color: rgba(255,255,255,0.2);
+    letter-spacing: 0.05em; text-align: center;
+  }
+
+  /* ─── LEGEND ─── */
+  .legend {
+    display: flex; flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px 16px;
+    max-width: min(92vw, 580px);
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 7px;
+    opacity: 0.45; transition: opacity 0.5s;
+  }
+  .legend-item.active { opacity: 1; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .legend-text {
+    font-size: clamp(0.65rem, 1.3vw, 0.8rem);
+    color: #fff; font-weight: 700;
+    letter-spacing: 0.05em; text-transform: uppercase;
+  }
+
+  /* ─── THEME PICKER ─── */
+  #theme-trigger {
+    position: fixed; bottom: 18px; right: 18px;
+    width: 42px; height: 42px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.1);
+    border: 2px solid rgba(255,255,255,0.2);
+    cursor: pointer; z-index: 100;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.1rem;
+    transition: background 0.2s, transform 0.2s;
+  }
+  #theme-trigger:hover { background: rgba(255,255,255,0.2); transform: scale(1.1); }
+
+  #theme-panel {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.75);
+    backdrop-filter: blur(10px);
+    z-index: 200;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 24px;
+  }
+  #theme-panel.open { display: flex; }
+
+  #theme-panel h2 {
+    font-family: 'Fredoka One', cursive;
+    font-size: clamp(1.4rem, 3vw, 2rem);
+    color: #fff; letter-spacing: 0.03em;
+  }
+
+  .theme-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    max-width: 520px; width: 100%;
+  }
+
+  .theme-card {
+    border-radius: 16px;
+    padding: 16px 12px;
+    cursor: pointer;
+    border: 3px solid transparent;
+    display: flex; flex-direction: column;
+    align-items: center; gap: 8px;
+    transition: transform 0.15s, border-color 0.2s;
+  }
+  .theme-card:hover { transform: scale(1.05); }
+  .theme-card.selected { border-color: #fff; }
+
+  .theme-card .t-icon { font-size: 2.2rem; line-height: 1; }
+  .theme-card .t-name {
+    font-family: 'Fredoka One', cursive;
+    font-size: 0.9rem; color: #fff;
+    letter-spacing: 0.03em; text-align: center;
+  }
+  .theme-swatches {
+    display: flex; gap: 4px;
+  }
+  .theme-swatch { width: 12px; height: 12px; border-radius: 50%; }
+
+  .panel-close {
+    font-family: 'Fredoka One', cursive;
+    font-size: 1rem; color: rgba(255,255,255,0.6);
+    cursor: pointer; letter-spacing: 0.05em;
+    padding: 8px 20px;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 40px;
+    transition: color 0.2s;
+  }
+  .panel-close:hover { color: #fff; }
+
+  /* ─── PULSE ─── */
+  @keyframes gentle-pulse {
+    0%,100% { opacity:1; transform:scale(1); }
+    50% { opacity:0.8; transform:scale(1.018); }
+  }
+  .zone-badge.pulsing { animation: gentle-pulse 1.4s ease-in-out infinite; }
+
+  /* ─── STAR TWINKLE ─── */
+  @keyframes twinkle {
+    0%,100% { opacity: 0.3; } 50% { opacity: 1; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="starfield"></canvas>
+
+<div class="layout">
+  <div class="clock-wrap">
+    <canvas id="zone-ring"></canvas>
+    <canvas id="clock-face"></canvas>
+  </div>
+  <div class="zone-badge" id="zone-badge">
+    <div class="zone-emoji" id="zone-emoji">🌅</div>
+    <div class="zone-info">
+      <div class="zone-label" id="zone-label">Loading…</div>
+      <div class="zone-sublabel" id="zone-sublabel"></div>
+    </div>
+  </div>
+  <div class="digital-time" id="digital-time">--:--</div>
+  <div class="legend" id="legend"></div>
+</div>
+
+<!-- Theme trigger (small cog bottom-right) -->
+<div id="theme-trigger" title="Change theme">🎨</div>
+
+<!-- Theme panel -->
+<div id="theme-panel">
+  <h2>Choose a Theme</h2>
+  <div class="theme-grid" id="theme-grid"></div>
+  <div class="panel-close" id="panel-close">Close</div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+//  ⚙️  SCHEDULE — edit times & labels to suit your family
+// ════════════════════════════════════════════════════════════
+const SCHEDULE = [
+  { id:"sleep",   startH:0,  startM:0,  endH:6,  endM:30, isNight:true  },
+  { id:"wakeup",  startH:6,  startM:30, endH:8,  endM:0,  isNight:false },
+  { id:"school",  startH:8,  startM:0,  endH:15, endM:30, isNight:false },
+  { id:"play",    startH:15, startM:30, endH:17, endM:30, isNight:false },
+  { id:"dinner",  startH:17, startM:30, endH:18, endM:30, isNight:false },
+  { id:"story",   startH:18, startM:30, endH:19, endM:0,  isNight:false },
+  { id:"bedtime", startH:19, startM:0,  endH:20, endM:0,  isNight:true  },
+  { id:"sleep2",  startH:20, startM:0,  endH:24, endM:0,  isNight:true  },
+];
+
+const PULSE_WARN_MINS = 5;
+
+// Night dimming: how dim the screen goes, and how many minutes either
+// side of a night-zone boundary the transition fades over.
+const NIGHT_BRIGHTNESS = 0.22;   // 0 = black, 1 = full brightness
+const NIGHT_FADE_MINS  = 10;     // gradual fade in/out around the boundary
+
+// ════════════════════════════════════════════════════════════
+//  🎨  THEMES
+//  Each theme defines: background, zone colours & labels,
+//  clock face colour, hand colour, and optional bg effect.
+// ════════════════════════════════════════════════════════════
+const THEMES = {
+  space: {
+    name: "Space",
+    icon: "🌌",
+    font: "'Fredoka One', cursive",
+    bg: "#0d0d1f",
+    bgEffect: "stars",
+    faceColor: "#1a1635",
+    faceText: "#a09ec0",
+    handColor: "#e0deff",
+    secondColor: "#f472b6",
+    capColor: "#7c3aed",
+    zones: {
+      sleep:   { label:"Sleeping",     emoji:"🌠", color:"#1e1b4b" },
+      wakeup:  { label:"Rise & Shine", emoji:"☀️",  color:"#f59e0b" },
+      school:  { label:"School Time",  emoji:"🚀",  color:"#3b82f6" },
+      play:    { label:"Explore!",     emoji:"🪐",  color:"#22c55e" },
+      dinner:  { label:"Fuel Up",      emoji:"🍽️",  color:"#f97316" },
+      story:   { label:"Story Time",   emoji:"📖",  color:"#a855f7" },
+      bedtime: { label:"Countdown",    emoji:"🌙",  color:"#6366f1" },
+      sleep2:  { label:"Sleeping",     emoji:"🌠", color:"#1e1b4b" },
+    }
+  },
+
+  nature: {
+    name: "Forest",
+    icon: "🌿",
+    font: "'Fredoka One', cursive",
+    bg: "#1a2e1a",
+    bgEffect: "none",
+    faceColor: "#f0f7ec",
+    faceText: "#3d5c2e",
+    handColor: "#2d4a1e",
+    secondColor: "#e76f1c",
+    capColor: "#2d4a1e",
+    zones: {
+      sleep:   { label:"Sleeping",     emoji:"🦉",  color:"#1c2b1c" },
+      wakeup:  { label:"Good Morning", emoji:"🐦",  color:"#d4a017" },
+      school:  { label:"Learning",     emoji:"🌳",  color:"#2d6a4f" },
+      play:    { label:"Outside!",     emoji:"🐸",  color:"#52b788" },
+      dinner:  { label:"Dinner Time",  emoji:"🍄",  color:"#d4720a" },
+      story:   { label:"Story Time",   emoji:"📖",  color:"#7b6d38" },
+      bedtime: { label:"Wind Down",    emoji:"🌿",  color:"#40694a" },
+      sleep2:  { label:"Sleeping",     emoji:"🦉",  color:"#1c2b1c" },
+    }
+  },
+
+  ocean: {
+    name: "Ocean",
+    icon: "🌊",
+    font: "'Fredoka One', cursive",
+    bg: "#03182e",
+    bgEffect: "none",
+    faceColor: "#e8f4f8",
+    faceText: "#0c4a6e",
+    handColor: "#0e3a5c",
+    secondColor: "#fb923c",
+    capColor: "#0369a1",
+    zones: {
+      sleep:   { label:"Deep Sea",     emoji:"🐳",  color:"#082f49" },
+      wakeup:  { label:"Sunrise",      emoji:"🌅",  color:"#0ea5e9" },
+      school:  { label:"School Time",  emoji:"🚌",  color:"#0284c7" },
+      play:    { label:"Splash Time",  emoji:"🐬",  color:"#06b6d4" },
+      dinner:  { label:"Dinner Time",  emoji:"🦀",  color:"#f97316" },
+      story:   { label:"Story Time",   emoji:"🐚",  color:"#7c3aed" },
+      bedtime: { label:"Tide In",      emoji:"🌙",  color:"#1e40af" },
+      sleep2:  { label:"Deep Sea",     emoji:"🐳",  color:"#082f49" },
+    }
+  },
+
+  adventure: {
+    name: "Adventure",
+    icon: "🏔️",
+    font: "'Fredoka One', cursive",
+    bg: "#1c1008",
+    bgEffect: "none",
+    faceColor: "#fef3c7",
+    faceText: "#6b3a1f",
+    handColor: "#431407",
+    secondColor: "#dc2626",
+    capColor: "#78350f",
+    zones: {
+      sleep:   { label:"Base Camp",    emoji:"⛺",  color:"#1c1008" },
+      wakeup:  { label:"Rise Up",      emoji:"🌄",  color:"#d97706" },
+      school:  { label:"Quest Time",   emoji:"🗺️",  color:"#0f766e" },
+      play:    { label:"Explore!",     emoji:"🧗",  color:"#65a30d" },
+      dinner:  { label:"Campfire",     emoji:"🔥",  color:"#c2410c" },
+      story:   { label:"Tale Time",    emoji:"📖",  color:"#7c3aed" },
+      bedtime: { label:"Pack Up",      emoji:"🌠",  color:"#1d4ed8" },
+      sleep2:  { label:"Base Camp",    emoji:"⛺",  color:"#1c1008" },
+    }
+  },
+
+  cosy: {
+    name: "Cosy",
+    icon: "🍄",
+    font: "'Fredoka One', cursive",
+    bg: "#2c1a0e",
+    bgEffect: "none",
+    faceColor: "#fdf6ec",
+    faceText: "#7c4a1e",
+    handColor: "#5c2e0a",
+    secondColor: "#e85d26",
+    capColor: "#7c4a1e",
+    zones: {
+      sleep:   { label:"Snoozing",     emoji:"🌙",  color:"#1e1008" },
+      wakeup:  { label:"Good Morning", emoji:"☕",  color:"#d4720a" },
+      school:  { label:"School Time",  emoji:"🚌",  color:"#7b6d38" },
+      play:    { label:"Play Time",    emoji:"🧸",  color:"#5c8a3c" },
+      dinner:  { label:"Dinner Time",  emoji:"🍲",  color:"#c0440e" },
+      story:   { label:"Story Time",   emoji:"📖",  color:"#8b5cf6" },
+      bedtime: { label:"Tuck In",      emoji:"🍄",  color:"#6b3a1f" },
+      sleep2:  { label:"Snoozing",     emoji:"🌙",  color:"#1e1008" },
+    }
+  },
+
+  neon: {
+    name: "Neon City",
+    icon: "⚡",
+    font: "'Space Grotesk', sans-serif",
+    bg: "#08080f",
+    bgEffect: "none",
+    faceColor: "#0f0f1a",
+    faceText: "#7b7b9e",
+    handColor: "#e0e0ff",
+    secondColor: "#00ffaa",
+    capColor: "#7c3aed",
+    zones: {
+      sleep:   { label:"Off Grid",     emoji:"💤",  color:"#0a0a14" },
+      wakeup:  { label:"Power Up",     emoji:"⚡",  color:"#eab308" },
+      school:  { label:"Mission",      emoji:"🎯",  color:"#3b82f6" },
+      play:    { label:"Free Time",    emoji:"🎮",  color:"#10b981" },
+      dinner:  { label:"Recharge",     emoji:"🍕",  color:"#f97316" },
+      story:   { label:"Story Mode",   emoji:"📖",  color:"#a855f7" },
+      bedtime: { label:"Shutdown",     emoji:"🌃",  color:"#6366f1" },
+      sleep2:  { label:"Off Grid",     emoji:"💤",  color:"#0a0a14" },
+    }
+  },
+};
+
+// ════════════════════════════════════════════════════════════
+//  State
+// ════════════════════════════════════════════════════════════
+let currentThemeKey = localStorage.getItem('clockTheme') || 'space';
+let theme = THEMES[currentThemeKey];
+let lastZoneId = null;
+let canvasSize = 0;
+
+// ── Helpers ──────────────────────────────────────────────
+const toMins = (h, m) => h * 60 + m;
+
+function getZoneData(id) {
+  return theme.zones[id];
+}
+
+function getCurrentSlot(nowMins) {
+  return SCHEDULE.find(z =>
+    nowMins >= toMins(z.startH, z.startM) && nowMins < toMins(z.endH, z.endM)
+  ) || SCHEDULE[0];
+}
+
+function minsUntilEnd(slot, nowMins) {
+  return toMins(slot.endH, slot.endM) - nowMins;
+}
+
+// Returns a 0–1 "dimness" amount: 0 = full daytime brightness,
+// 1 = fully dimmed for sleep. Ramps smoothly over NIGHT_FADE_MINS
+// either side of the sleep period's start/end — measured against
+// the sleep period's actual boundaries (not each slot's own start),
+// so multiple consecutive night slots (bedtime -> sleep) don't
+// cause a reset partway through.
+function getNightDimness(nowMins) {
+  // Build the set of [start,end) minute-ranges that are night, merging
+  // any back-to-back night slots into single continuous ranges.
+  const ranges = [];
+  let cur = null;
+  SCHEDULE.forEach(z => {
+    const s = toMins(z.startH, z.startM), e = toMins(z.endH, z.endM);
+    if (z.isNight) {
+      if (cur && cur.end === s) cur.end = e;
+      else { cur = { start: s, end: e }; ranges.push(cur); }
+    } else {
+      cur = null;
+    }
+  });
+  // Merge wrap-around: if last range ends at 1440 and first starts at 0
+  if (ranges.length > 1) {
+    const first = ranges[0], last = ranges[ranges.length - 1];
+    if (last.end === 1440 && first.start === 0) {
+      last.end = first.end + 1440;
+      ranges.shift();
+    }
+  }
+
+  // For each night range (and its midnight-wrapped copies), dimness is
+  // 1 while strictly inside, ramping down over NIGHT_FADE_MINS as we
+  // approach the start (not yet asleep) or move past the end (woken
+  // up). Using a signed distance-to-each-edge avoids any special-casing
+  // of "inside vs outside" right at the boundary, so it's continuous.
+  let dim = 0;
+  ranges.forEach(r => {
+    [-1440, 0, 1440].forEach(offset => {
+      const s = r.start + offset, e = r.end + offset;
+      const distToStart = nowMins - s;            // >0 once range has begun
+      const distToEnd    = e - nowMins;             // >0 until range has ended
+      if (distToStart >= 0 && distToEnd >= 0) {
+        // Inside the range: full dim, easing down near the END edge
+        // only (waking up). The ramp INTO the range is handled by the
+        // "approaching" branch below, so the two curves meet at 1.0
+        // right at the start boundary instead of fighting each other.
+        const d = Math.min(distToEnd / NIGHT_FADE_MINS, 1);
+        dim = Math.max(dim, d);
+      } else if (distToStart < 0 && distToStart > -NIGHT_FADE_MINS) {
+        // Approaching the range from before (e.g. bedtime winding
+        // down toward lights-out): ramp up to 1.
+        dim = Math.max(dim, 1 + distToStart / NIGHT_FADE_MINS);
+      }
+      // Note: no "receding after the end" branch — once the range has
+      // fully ended, dimness is simply 0 (daytime) until the next
+      // night range's own approach-ramp picks it back up.
+    });
+  });
+  return Math.max(0, Math.min(1, dim));
+}
+
+// ── Canvas setup ─────────────────────────────────────────
+const ringCanvas = document.getElementById('zone-ring');
+const faceCanvas = document.getElementById('clock-face');
+
+function resizeCanvases() {
+  const size = ringCanvas.parentElement.offsetWidth;
+  const dpr = window.devicePixelRatio || 1;
+  [ringCanvas, faceCanvas].forEach(c => {
+    c.width  = size * dpr;
+    c.height = size * dpr;
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  });
+}
+
+// ── Zone ring ─────────────────────────────────────────────
+function drawZoneRing(size) {
+  const ctx = ringCanvas.getContext('2d');
+  ctx.clearRect(0, 0, size, size);
+  const cx = size / 2, cy = size / 2;
+  const outerR = size / 2 * 0.97;
+  const innerR = size / 2 * 0.70;
+
+  SCHEDULE.forEach(slot => {
+    const zd = getZoneData(slot.id);
+    const drawArc = (sMin, eMin) => {
+      const s = sMin % 720, e = eMin % 720;
+      if (s === e) return;
+      const sa = (s / 720) * 2 * Math.PI - Math.PI / 2;
+      const ea = (e / 720) * 2 * Math.PI - Math.PI / 2;
+      ctx.beginPath();
+      ctx.moveTo(cx + innerR * Math.cos(sa), cy + innerR * Math.sin(sa));
+      ctx.arc(cx, cy, outerR, sa, ea);
+      ctx.arc(cx, cy, innerR, ea, sa, true);
+      ctx.closePath();
+      ctx.fillStyle = zd.color;
+      ctx.globalAlpha = 0.88;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Zone emoji at midpoint of arc
+      const midAngle = (sa + ea) / 2;
+      const labelR = (outerR + innerR) / 2;
+      const ex = cx + labelR * Math.cos(midAngle);
+      const ey = cy + labelR * Math.sin(midAngle);
+      const arcSpan = Math.abs(ea - sa);
+      if (arcSpan > 0.28) { // only draw if arc is wide enough
+        ctx.save();
+        ctx.font = `${size * 0.044}px serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.globalAlpha = 0.9;
+        ctx.fillText(zd.emoji, ex, ey);
+        ctx.restore();
+      }
+    };
+
+    const s = toMins(slot.startH, slot.startM);
+    const e = toMins(slot.endH, slot.endM);
+
+    if (e <= 720)        { drawArc(s, e); }
+    else if (s < 720)    { drawArc(s, 720); drawArc(0, e - 720); }
+    else                 { drawArc(s - 720, e - 720); }
+  });
+
+  // Inner clock face bg
+  ctx.beginPath();
+  ctx.arc(cx, cy, innerR, 0, 2 * Math.PI);
+  ctx.fillStyle = theme.faceColor;
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, innerR, 0, 2 * Math.PI);
+  ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+// ── Clock face & hands ────────────────────────────────────
+function drawClockFace(size, now) {
+  const ctx = faceCanvas.getContext('2d');
+  ctx.clearRect(0, 0, size, size);
+  const cx = size / 2, cy = size / 2;
+  const faceR = size / 2 * 0.70;
+
+  // Numbers
+  const nums = ['12','1','2','3','4','5','6','7','8','9','10','11'];
+  ctx.fillStyle = theme.faceText;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `bold ${faceR * 0.14}px ${theme.font}`;
+  nums.forEach((n, i) => {
+    const angle = (i / 12) * 2 * Math.PI - Math.PI / 2;
+    const r = faceR * 0.77;
+    ctx.fillText(n, cx + r * Math.cos(angle), cy + r * Math.sin(angle));
+  });
+
+  // Ticks
+  for (let i = 0; i < 60; i++) {
+    const angle = (i / 60) * 2 * Math.PI - Math.PI / 2;
+    const major = i % 5 === 0;
+    const r1 = faceR * (major ? 0.86 : 0.90);
+    const r2 = faceR * 0.93;
+    ctx.beginPath();
+    ctx.moveTo(cx + r1 * Math.cos(angle), cy + r1 * Math.sin(angle));
+    ctx.lineTo(cx + r2 * Math.cos(angle), cy + r2 * Math.sin(angle));
+    ctx.strokeStyle = major ? theme.faceText + 'aa' : theme.faceText + '44';
+    ctx.lineWidth = major ? 2.5 : 1.2;
+    ctx.stroke();
+  }
+
+  const h = now.getHours() % 12;
+  const m = now.getMinutes();
+  const s = now.getSeconds();
+
+  // Hour hand
+  const hourA = ((h + m/60 + s/3600) / 12) * 2 * Math.PI - Math.PI / 2;
+  drawHand(ctx, cx, cy, hourA, faceR * 0.47, faceR * 0.048, theme.handColor, faceR * -0.1);
+
+  // Minute hand
+  const minA = ((m + s/60) / 60) * 2 * Math.PI - Math.PI / 2;
+  drawHand(ctx, cx, cy, minA, faceR * 0.64, faceR * 0.032, theme.handColor, faceR * -0.12);
+
+  // Second hand
+  const secA = (s / 60) * 2 * Math.PI - Math.PI / 2;
+  ctx.beginPath();
+  ctx.moveTo(cx + faceR * -0.18 * Math.cos(secA), cy + faceR * -0.18 * Math.sin(secA));
+  ctx.lineTo(cx + faceR * 0.70 * Math.cos(secA),  cy + faceR * 0.70 * Math.sin(secA));
+  ctx.strokeStyle = theme.secondColor;
+  ctx.lineWidth = faceR * 0.016;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // Caps
+  ctx.beginPath(); ctx.arc(cx, cy, faceR * 0.052, 0, 2*Math.PI);
+  ctx.fillStyle = theme.handColor; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, faceR * 0.026, 0, 2*Math.PI);
+  ctx.fillStyle = theme.secondColor; ctx.fill();
+}
+
+function drawHand(ctx, cx, cy, angle, length, width, color, tail = 0) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(tail, 0);
+  ctx.lineTo(length, 0);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ── Starfield ─────────────────────────────────────────────
+const starCanvas = document.getElementById('starfield');
+let stars = [];
+
+function initStars() {
+  const ctx = starCanvas.getContext('2d');
+  starCanvas.width  = window.innerWidth;
+  starCanvas.height = window.innerHeight;
+  stars = Array.from({length: 120}, () => ({
+    x: Math.random() * starCanvas.width,
+    y: Math.random() * starCanvas.height,
+    r: Math.random() * 1.6 + 0.3,
+    phase: Math.random() * Math.PI * 2,
+    speed: 0.3 + Math.random() * 0.7,
+  }));
+}
+
+function drawStars(t) {
+  if (theme.bgEffect !== 'stars') return;
+  const ctx = starCanvas.getContext('2d');
+  ctx.clearRect(0, 0, starCanvas.width, starCanvas.height);
+  stars.forEach(st => {
+    const alpha = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * st.speed * 0.001 + st.phase));
+    ctx.beginPath();
+    ctx.arc(st.x, st.y, st.r, 0, 2*Math.PI);
+    ctx.fillStyle = `rgba(255,255,255,${alpha.toFixed(2)})`;
+    ctx.fill();
+  });
+}
+
+// ── Legend ────────────────────────────────────────────────
+function buildLegend(activeId) {
+  const seen = new Set();
+  const legend = document.getElementById('legend');
+  legend.innerHTML = '';
+  SCHEDULE.forEach(slot => {
+    const zd = getZoneData(slot.id);
+    if (seen.has(zd.label)) return;
+    seen.add(zd.label);
+    const item = document.createElement('div');
+    const isActive = slot.id === activeId ||
+      (slot.id === 'sleep2' && activeId === 'sleep') ||
+      (slot.id === 'sleep' && activeId === 'sleep2');
+    item.className = 'legend-item' + (isActive ? ' active' : '');
+    item.innerHTML = `
+      <div class="legend-dot" style="background:${zd.color}"></div>
+      <span class="legend-text">${zd.emoji} ${zd.label}</span>
+    `;
+    legend.appendChild(item);
+  });
+}
+
+// ── Apply theme ───────────────────────────────────────────
+function applyTheme(key) {
+  currentThemeKey = key;
+  theme = THEMES[key];
+  localStorage.setItem('clockTheme', key);
+
+  document.body.style.background = theme.bg;
+  starCanvas.style.display = theme.bgEffect === 'stars' ? 'block' : 'none';
+  if (theme.bgEffect === 'stars') initStars();
+
+  lastZoneId = null; // force badge + legend refresh
+  canvasSize = 0;    // force canvas redraw
+}
+
+// ── Theme panel ───────────────────────────────────────────
+function buildThemePanel() {
+  const grid = document.getElementById('theme-grid');
+  grid.innerHTML = '';
+  Object.entries(THEMES).forEach(([key, t]) => {
+    const card = document.createElement('div');
+    card.className = 'theme-card' + (key === currentThemeKey ? ' selected' : '');
+    const swatchIds = ['wakeup','school','play','dinner','story'];
+    const swatches = swatchIds.map(id =>
+      `<div class="theme-swatch" style="background:${t.zones[id].color}"></div>`
+    ).join('');
+
+    card.innerHTML = `
+      <div class="t-icon">${t.icon}</div>
+      <div class="t-name">${t.name}</div>
+      <div class="theme-swatches">${swatches}</div>
+    `;
+
+    // Card bg = averaged from zone colors (use school zone)
+    card.style.background = t.zones.school.color + 'cc';
+
+    card.addEventListener('click', () => {
+      applyTheme(key);
+      document.querySelectorAll('.theme-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      setTimeout(() => closePanel(), 400);
+    });
+    grid.appendChild(card);
+  });
+}
+
+const themePanel  = document.getElementById('theme-panel');
+const themeTrigger = document.getElementById('theme-trigger');
+
+function openPanel() {
+  buildThemePanel();
+  themePanel.classList.add('open');
+}
+function closePanel() {
+  themePanel.classList.remove('open');
+}
+
+themeTrigger.addEventListener('click', openPanel);
+document.getElementById('panel-close').addEventListener('click', closePanel);
+
+// ── Main tick ─────────────────────────────────────────────
+let animFrame;
+function tick(t) {
+  const now = new Date();
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const slot = getCurrentSlot(nowMins);
+  const zd   = getZoneData(slot.id);
+  const left  = minsUntilEnd(slot, nowMins);
+  const size  = ringCanvas.parentElement.offsetWidth;
+
+  if (size !== canvasSize && size > 0) {
+    canvasSize = size;
+    resizeCanvases();
+    drawZoneRing(size);
+  }
+
+  drawClockFace(size, now);
+  if (theme.bgEffect === 'stars') drawStars(t);
+
+  // Night dimming — smooth filter based on proximity to sleep zones
+  const dim = getNightDimness(nowMins);
+  const brightness = 1 - dim * (1 - NIGHT_BRIGHTNESS);
+  const saturation  = 1 - dim * 0.3;
+  const filterStr = `brightness(${brightness.toFixed(3)}) saturate(${saturation.toFixed(3)})`;
+  document.querySelector('.layout').style.filter = filterStr;
+  starCanvas.style.filter = filterStr;
+
+  // Badge
+  const badge    = document.getElementById('zone-badge');
+  document.getElementById('zone-emoji').textContent = zd.emoji;
+  document.getElementById('zone-label').textContent = zd.label;
+  badge.style.borderColor = zd.color + '66';
+  badge.style.background  = zd.color + '28';
+
+  const sub = document.getElementById('zone-sublabel');
+  if (left <= 60) {
+    sub.textContent = left <= 1 ? 'Almost done!' : `${left} min${left===1?'':'s'} left`;
+  } else {
+    const hh = Math.floor(left/60), mm = left%60;
+    sub.textContent = mm > 0 ? `${hh}h ${mm}m left` : `${hh}h left`;
+  }
+
+  badge.classList.toggle('pulsing', left <= PULSE_WARN_MINS);
+
+  // Digital
+  const dh = String(now.getHours()).padStart(2,'0');
+  const dm = String(now.getMinutes()).padStart(2,'0');
+  document.getElementById('digital-time').textContent = `${dh}:${dm}`;
+
+  // Legend & ring: only on zone change
+  if (slot.id !== lastZoneId) {
+    lastZoneId = slot.id;
+    if (canvasSize > 0) drawZoneRing(canvasSize);
+    buildLegend(slot.id);
+  }
+
+  animFrame = requestAnimationFrame(tick);
+}
+
+// ── Boot ──────────────────────────────────────────────────
+applyTheme(currentThemeKey);
+resizeCanvases();
+buildLegend(null);
+requestAnimationFrame(tick);
+window.addEventListener('resize', () => {
+  canvasSize = 0;
+  if (theme.bgEffect === 'stars') {
+    starCanvas.width  = window.innerWidth;
+    starCanvas.height = window.innerHeight;
+    initStars();
+  }
+});
+</script>
+</body>
+</html>

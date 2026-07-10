@@ -1,0 +1,30 @@
+{
+  "theme": "space",
+  "schedule": [
+    { "id": "sleep",   "startH": 0,  "startM": 0,  "endH": 6,  "endM": 30, "isNight": true  },
+    { "id": "wakeup",  "startH": 6,  "startM": 30, "endH": 8,  "endM": 0,  "isNight": false },
+    { "id": "school",  "startH": 8,  "startM": 0,  "endH": 15, "endM": 30, "isNight": false },
+    { "id": "play",    "startH": 15, "startM": 30, "endH": 17, "endM": 30, "isNight": false },
+    { "id": "dinner",  "startH": 17, "startM": 30, "endH": 18, "endM": 30, "isNight": false },
+    { "id": "story",   "startH": 18, "startM": 30, "endH": 19, "endM": 0,  "isNight": false },
+    { "id": "bedtime", "startH": 19, "startM": 0,  "endH": 20, "endM": 0,  "isNight": true  },
+    { "id": "sleep2",  "startH": 20, "startM": 0,  "endH": 24, "endM": 0,  "isNight": true  }
+  ],
+  "alarms": [
+    {
+      "id": 1,
+      "label": "School Day",
+      "time": "07:00",
+      "days": ["mon", "tue", "wed", "thu", "fri"],
+      "sounds": [
+        { "level": 1, "file": "alarm-1.mp3", "volume": 0.2,  "delay": 0   },
+        { "level": 2, "file": "alarm-2.mp3", "volume": 0.45, "delay": 180 },
+        { "level": 3, "file": "alarm-3.mp3", "volume": 0.7,  "delay": 300 },
+        { "level": 4, "file": "alarm-4.mp3", "volume": 1.0,  "delay": 420 }
+      ],
+      "enabled": true
+    }
+  ],
+  "nightBrightness": 0.22,
+  "nightFadeMins": 10
+}
