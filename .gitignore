@@ -1,0 +1,11 @@
+# VS Code
+.vscode/
+
+# Mac rubbish
+.DS_Store
+**/.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+server.log
