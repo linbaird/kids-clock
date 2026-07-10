@@ -35,6 +35,6 @@ if os.path.exists(WAKE_LOCK):
 
 # Decide screen state
 if is_night and not wake_active:
-    subprocess.run(['xset', '-display', ':0', 'dpms', 'force', 'off'])
+    subprocess.run(['vcgencmd', 'display_power', '0'])
 else:
-    subprocess.run(['xset', '-display', ':0', 'dpms', 'force', 'on'])
+    subprocess.run(['vcgencmd', 'display_power', '1'])

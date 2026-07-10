@@ -15,7 +15,4 @@ with open(TOUCH_DEVICE, 'rb') as f:
             with open(WAKE_LOCK, 'w') as lock:
                 lock.write(str(time.time()))
             # Turn screen on immediately
-            subprocess.run(
-                ['xset', '-display', ':0', 'dpms', 'force', 'on'],
-                env={**os.environ, 'DISPLAY': ':0'}
-            )
+            subprocess.run(['vcgencmd', 'display_power', '1'])
