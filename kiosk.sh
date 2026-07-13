@@ -7,7 +7,7 @@
 # relaunches start but never appear. If Chromium dies, reboot instead.
 
 until wlr-randr >/dev/null 2>&1; do sleep 1; done
-sleep 2
+sleep 20
 
 chromium \
   --user-data-dir=/home/linbaird/.config/kiosk-profile \
