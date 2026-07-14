@@ -939,6 +939,8 @@ function tick() {
 let ALARMS = [];
 let MESSAGE = { text: "", enabled: false };
 let lastConfigStr = null;
+let lastCfgTheme = null;   // change-detection so on-clock picks aren't
+let lastCfgMode  = null;   // overwritten by the next 30s poll
 
 function applyConfig(cfg) {
   if (Array.isArray(cfg.schedule) && cfg.schedule.length) SCHEDULE = cfg.schedule;
@@ -947,6 +949,27 @@ function applyConfig(cfg) {
     ? cfg.message : { text: "", enabled: false };
   if (typeof cfg.nightBrightness === 'number') NIGHT_BRIGHTNESS = cfg.nightBrightness;
   if (typeof cfg.nightFadeMins === 'number')   NIGHT_FADE_MINS  = cfg.nightFadeMins;
+
+  // Theme & mode: config wins whenever the settings-page value
+  // CHANGES; between changes, on-clock picks (if buttons shown)
+  // stay in effect. Last writer wins.
+  if (THEMES[cfg.theme] && cfg.theme !== lastCfgTheme) {
+    lastCfgTheme = cfg.theme;
+    applyTheme(cfg.theme);
+  }
+  if (['auto','light','dark'].includes(cfg.mode) && cfg.mode !== lastCfgMode) {
+    lastCfgMode = cfg.mode;
+    mode = cfg.mode;
+    localStorage.setItem('clockMode', mode);
+    renderModeButton();
+  }
+
+  // Hide the on-clock buttons entirely if the parents say so
+  const showBtns = cfg.showClockButtons !== false;
+  document.getElementById('theme-trigger').style.display = showBtns ? 'flex' : 'none';
+  document.getElementById('mode-toggle').style.display   = showBtns ? 'flex' : 'none';
+  if (!showBtns) panel.classList.remove('open');
+
   renderMessage();
   canvasSize = 0;    // repaint ring with (possibly) new schedule
   lastZoneId = null; // rebuild legend
