@@ -102,12 +102,64 @@
     color: var(--ink-soft);
   }
 
+  /* Message from the parents (settings.html) */
+  .msg-card {
+    padding: 12px 24px;
+    border-radius: 16px;
+    border: 2px solid var(--panel-border);
+    background: var(--panel);
+  }
+  .msg-card .next-label {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
   .digital-time {
     font-family: var(--font-display);
     font-size: clamp(1.8rem, 6vh, 2.8rem);
     color: var(--ink-faint);
     letter-spacing: 0.06em;
     padding-left: 24px;
+  }
+
+  /* ── Alarm ringing overlay ── */
+  #alarm-overlay {
+    position: fixed; inset: 0; z-index: 300;
+    background: var(--bg);
+    display: none;
+    flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: clamp(16px, 5vh, 36px);
+    text-align: center; padding: 5vh 8vw;
+  }
+  #alarm-overlay.open { display: flex; }
+  .alarm-eyebrow {
+    font-size: clamp(0.8rem, 2.5vh, 1rem);
+    color: var(--ink-soft);
+    font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase;
+  }
+  #alarm-label {
+    font-family: var(--font-display);
+    font-size: clamp(2.6rem, 12vh, 5rem);
+    color: var(--ink); line-height: 1.05;
+  }
+  #alarm-time {
+    font-family: var(--font-display);
+    font-size: clamp(1.4rem, 5vh, 2.2rem);
+    color: var(--ink-faint);
+  }
+  #alarm-stop {
+    font-family: 'Nunito', sans-serif;
+    font-size: clamp(1.4rem, 5vh, 2rem);
+    font-weight: 800; letter-spacing: 0.06em;
+    color: var(--bg);
+    background: var(--ink);
+    border: none; border-radius: 60px;
+    padding: clamp(16px, 4vh, 26px) clamp(60px, 18vw, 140px);
+    cursor: pointer;
+    animation: gentle-pulse 1.4s ease-in-out infinite;
   }
 
   .legend {
@@ -136,6 +188,10 @@
     display: flex; align-items: center; justify-content: center;
   }
   .corner-btn svg { width: 20px; height: 20px; stroke: var(--ink-soft); fill: none; stroke-width: 2; }
+  /* Child lock: corner buttons need a 1.5s hold. The slow scale-up
+     while holding doubles as the progress indicator. */
+  .corner-btn { transition: transform 1.5s ease, border-color 1.5s ease; }
+  .corner-btn.holding { transform: scale(1.35); border-color: var(--ink); }
   #theme-trigger { bottom: 14px; right: 14px; }
   #mode-toggle   { bottom: 14px; left: 14px; }
   #mode-toggle .mode-tag {
@@ -215,6 +271,11 @@
       <div class="next-label" id="next-label">—</div>
     </div>
 
+    <div class="msg-card" id="msg-card" style="display:none">
+      <div class="next-eyebrow">Message for you</div>
+      <div class="next-label" id="msg-text"></div>
+    </div>
+
     <div class="digital-time" id="digital-time">--:--</div>
     <div class="legend" id="legend"></div>
   </div>
@@ -231,6 +292,14 @@
   <svg viewBox="0 0 24 24"><circle cx="8" cy="8" r="2.6"/><circle cx="16" cy="8" r="2.6"/><circle cx="8" cy="16" r="2.6"/><circle cx="16" cy="16" r="2.6"/></svg>
 </div>
 
+<!-- Alarm ringing screen -->
+<div id="alarm-overlay">
+  <div class="alarm-eyebrow">Good morning</div>
+  <div id="alarm-label">Wake up!</div>
+  <div id="alarm-time">--:--</div>
+  <button id="alarm-stop">Stop</button>
+</div>
+
 <div id="theme-panel">
   <h2>Choose a Theme</h2>
   <div class="theme-grid" id="theme-grid"></div>
@@ -239,12 +308,13 @@
 
 <script>
 // ════════════════════════════════════════════════════════════
-//  SCHEDULE
-//  ⚠️ DRIFT WARNING: duplicates the "schedule" array in
-//  config.json (used by screen.py). Keep the two in sync until
-//  server.py serves config.json to this page.
+//  SCHEDULE — FALLBACK ONLY.
+//  The live schedule/alarms/message come from /api/config
+//  (served by server.py from config.json) and are re-fetched
+//  every 30s. These values are used only if the server is
+//  unreachable, so the clock still works standalone.
 // ════════════════════════════════════════════════════════════
-const SCHEDULE = [
+let SCHEDULE = [
   { id:"sleep",   startH:0,  startM:0,  endH:6,  endM:30, isNight:true  },
   { id:"wakeup",  startH:6,  startM:30, endH:8,  endM:0,  isNight:false },
   { id:"school",  startH:8,  startM:0,  endH:15, endM:30, isNight:false },
@@ -256,8 +326,9 @@ const SCHEDULE = [
 ];
 
 const PULSE_WARN_MINS  = 5;
-const NIGHT_BRIGHTNESS = 0.35;  // gentler than before: the dark palette
-const NIGHT_FADE_MINS  = 10;    // now does most of the night work
+let NIGHT_BRIGHTNESS = 0.35;  // gentler than before: the dark palette
+let NIGHT_FADE_MINS  = 10;    // now does most of the night work
+                              // (both overridable via config)
 
 // Ring geometry: thin, minimal band near the rim
 const RING_OUTER = 0.985;
@@ -745,7 +816,25 @@ function buildThemePanel() {
 }
 
 const panel = document.getElementById('theme-panel');
-document.getElementById('theme-trigger').addEventListener('click', () => {
+
+// Child lock: corner buttons fire only after a 1.5s press-and-hold,
+// so little fingers can't theme-shuffle or flip dark mode at 2am.
+function holdToActivate(el, fn, ms = 1500) {
+  let timer = null;
+  const cancel = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    el.classList.remove('holding');
+  };
+  el.addEventListener('pointerdown', () => {
+    el.classList.add('holding');
+    timer = setTimeout(() => { cancel(); fn(); }, ms);
+  });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev =>
+    el.addEventListener(ev, cancel));
+}
+
+holdToActivate(document.getElementById('theme-trigger'), () => {
   buildThemePanel();
   panel.classList.add('open');
 });
@@ -767,7 +856,7 @@ function renderModeButton() {
   document.getElementById('mode-tag').textContent = mode;
 }
 
-document.getElementById('mode-toggle').addEventListener('click', () => {
+holdToActivate(document.getElementById('mode-toggle'), () => {
   mode = mode === 'auto' ? 'light' : mode === 'light' ? 'dark' : 'auto';
   localStorage.setItem('clockMode', mode);
   renderModeButton();
@@ -844,7 +933,107 @@ function tick() {
   requestAnimationFrame(tick);
 }
 
+// ════════════════════════════════════════════════════════════
+//  Live config from server.py (/api/config)
+// ════════════════════════════════════════════════════════════
+let ALARMS = [];
+let MESSAGE = { text: "", enabled: false };
+let lastConfigStr = null;
+
+function applyConfig(cfg) {
+  if (Array.isArray(cfg.schedule) && cfg.schedule.length) SCHEDULE = cfg.schedule;
+  if (Array.isArray(cfg.alarms)) ALARMS = cfg.alarms;
+  MESSAGE = (cfg.message && typeof cfg.message === 'object')
+    ? cfg.message : { text: "", enabled: false };
+  if (typeof cfg.nightBrightness === 'number') NIGHT_BRIGHTNESS = cfg.nightBrightness;
+  if (typeof cfg.nightFadeMins === 'number')   NIGHT_FADE_MINS  = cfg.nightFadeMins;
+  renderMessage();
+  canvasSize = 0;    // repaint ring with (possibly) new schedule
+  lastZoneId = null; // rebuild legend
+}
+
+function renderMessage() {
+  const card = document.getElementById('msg-card');
+  const show = MESSAGE.enabled && MESSAGE.text && MESSAGE.text.trim();
+  card.style.display = show ? 'block' : 'none';
+  if (show) document.getElementById('msg-text').textContent = MESSAGE.text.trim();
+}
+
+async function fetchConfig() {
+  try {
+    const res = await fetch('/api/config', { cache: 'no-store' });
+    if (!res.ok) return;
+    const txt = await res.text();
+    if (txt === lastConfigStr) return;   // unchanged — skip re-render
+    lastConfigStr = txt;
+    applyConfig(JSON.parse(txt));
+  } catch (e) {
+    // file:// or server down: built-in fallbacks keep the clock alive
+  }
+}
+setInterval(fetchConfig, 30000);
+
+// ════════════════════════════════════════════════════════════
+//  Alarm engine — escalating levels from config, big Stop button.
+//  Audio needs --autoplay-policy=no-user-gesture-required in
+//  kiosk.sh; if a sound file is missing the visual alarm still
+//  shows and the engine keeps escalating.
+// ════════════════════════════════════════════════════════════
+const DAY_KEYS = ['sun','mon','tue','wed','thu','fri','sat'];
+const ALARM_MAX_MS = 15 * 60 * 1000;   // safety auto-stop
+let ringing = null;                     // { alarm, timeouts, audio, startedAt }
+const firedKeys = new Set();
+
+function startAlarm(al) {
+  ringing = { alarm: al, timeouts: [], audio: null, startedAt: Date.now() };
+  document.getElementById('alarm-label').textContent = al.label || 'Wake up!';
+  document.getElementById('alarm-overlay').classList.add('open');
+  (al.sounds || []).forEach(s => {
+    ringing.timeouts.push(setTimeout(() => playLevel(s), (s.delay || 0) * 1000));
+  });
+}
+
+function playLevel(s) {
+  if (!ringing) return;
+  if (ringing.audio) ringing.audio.pause();
+  const a = new Audio(`/sounds/${s.file}`);
+  a.loop = true;
+  a.volume = Math.max(0, Math.min(1, s.volume ?? 1));
+  a.play().catch(err => console.warn('Alarm audio unavailable:', s.file, err));
+  ringing.audio = a;
+}
+
+function stopAlarm() {
+  if (!ringing) return;
+  ringing.timeouts.forEach(clearTimeout);
+  if (ringing.audio) ringing.audio.pause();
+  ringing = null;
+  document.getElementById('alarm-overlay').classList.remove('open');
+}
+document.getElementById('alarm-stop').addEventListener('click', stopAlarm);
+
+function checkAlarms() {
+  if (ringing) {
+    if (Date.now() - ringing.startedAt > ALARM_MAX_MS) stopAlarm();
+    return;
+  }
+  const now = new Date();
+  const hhmm = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  const day = DAY_KEYS[now.getDay()];
+  ALARMS.forEach(al => {
+    if (!al.enabled || al.time !== hhmm) return;
+    if (Array.isArray(al.days) && al.days.length && !al.days.includes(day)) return;
+    const key = `${al.id}|${now.toDateString()}|${al.time}`;
+    if (firedKeys.has(key)) return;
+    firedKeys.add(key);
+    document.getElementById('alarm-time').textContent = hhmm;
+    startAlarm(al);
+  });
+}
+setInterval(checkAlarms, 5000);
+
 // ── Boot ──────────────────────────────────────────────────
+fetchConfig();
 applyPalette(resolvePaletteName(getNightDimness(
   new Date().getHours() * 60 + new Date().getMinutes())));
 lastPaletteName = paletteName;

@@ -96,7 +96,9 @@ class Handler(SimpleHTTPRequestHandler):
         if path == '/api/config':
             try:
                 with open(CONFIG_PATH) as f:
-                    self._send_json(json.load(f))
+                    cfg = json.load(f)
+                cfg.pop('settingsPin', None)   # never leak the PIN
+                self._send_json(cfg)
             except Exception as e:
                 self._send_json({'error': f'cannot read config: {e}'}, 500)
         elif path == '/':
@@ -107,22 +109,65 @@ class Handler(SimpleHTTPRequestHandler):
             super().do_GET()
 
     def do_POST(self):
-        if self.path.split('?')[0] != '/api/config':
-            self._send_json({'error': 'not found'}, 404)
-            return
+        path = self.path.split('?')[0]
         try:
             length = int(self.headers.get('Content-Length', 0))
-            data = json.loads(self.rfile.read(length))
+            data = json.loads(self.rfile.read(length)) if length else {}
         except Exception:
             self._send_json({'error': 'invalid JSON'}, 400)
             return
+
+        # Current stored PIN (may be absent = lock not set up yet)
+        stored_pin = None
+        try:
+            with open(CONFIG_PATH) as f:
+                stored_pin = json.load(f).get('settingsPin')
+        except Exception:
+            pass
+
+        if path == '/api/verify':
+            # Used by settings.html's lock screen
+            pin = str(data.get('pin', ''))
+            self._send_json({
+                'required': bool(stored_pin),
+                'ok': (not stored_pin) or pin == stored_pin,
+            })
+            return
+
+        if path != '/api/config':
+            self._send_json({'error': 'not found'}, 404)
+            return
+
+        # Parent lock: if a PIN is set, saving requires it
+        if stored_pin and self.headers.get('X-Clock-Pin') != stored_pin:
+            self._send_json({'error': 'wrong PIN'}, 403)
+            return
+
+        # Setting / changing / keeping the PIN:
+        # GET strips the PIN, so a normal round-trip save won't include
+        # it — preserve the stored one unless a new value is supplied.
+        new_pin = data.get('settingsPin')
+        if new_pin is not None:
+            new_pin = str(new_pin)
+            if new_pin and not (new_pin.isdigit() and 4 <= len(new_pin) <= 8):
+                self._send_json({'error': 'PIN must be 4-8 digits'}, 400)
+                return
+            if new_pin:
+                data['settingsPin'] = new_pin
+            else:
+                data.pop('settingsPin', None)   # empty string removes the lock
+        elif stored_pin:
+            data['settingsPin'] = stored_pin
+
         err = validate_config(data)
         if err:
             self._send_json({'error': err}, 400)
             return
         try:
             save_config(data)
-            self._send_json({'ok': True, 'config': data})
+            saved = dict(data)
+            saved.pop('settingsPin', None)
+            self._send_json({'ok': True, 'config': saved})
         except Exception as e:
             self._send_json({'error': f'save failed: {e}'}, 500)
 

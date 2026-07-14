@@ -13,6 +13,20 @@
 </head>
 <body class="min-h-screen bg-base-200 pb-28">
 
+<!-- PIN lock screen -->
+<div id="lock-screen" class="fixed inset-0 z-50 bg-base-200 flex items-center justify-center p-6" style="display:none">
+  <div class="card bg-base-100 shadow-lg w-full max-w-xs">
+    <div class="card-body items-center gap-4">
+      <h2 class="card-title text-base">🔒 Parent lock</h2>
+      <input type="password" id="lock-pin" inputmode="numeric" pattern="[0-9]*"
+        maxlength="8" placeholder="PIN"
+        class="input input-bordered w-full text-center text-2xl tracking-widest">
+      <button id="lock-unlock" class="btn btn-primary w-full">Unlock</button>
+      <p id="lock-error" class="text-error text-xs" style="display:none">Wrong PIN — try again</p>
+    </div>
+  </div>
+</div>
+
 <div class="navbar bg-base-100 shadow-sm sticky top-0 z-10">
   <div class="flex-1 px-2">
     <span class="text-lg font-bold">🕐 Kids Clock Settings</span>
@@ -63,6 +77,18 @@ Love Mum &amp; Dad"></textarea>
           <input type="number" id="night-fade" class="input input-bordered input-xs w-16 mx-1"
             min="0" max="60"> minutes</span>
       </label>
+    </div>
+  <!-- ── Parent lock ── -->
+  <div class="card bg-base-100 shadow-sm">
+    <div class="card-body p-5 gap-3">
+      <h2 class="card-title text-base">Parent lock</h2>
+      <p class="text-xs opacity-60" id="pin-status">No PIN set — anyone on the
+        WiFi can change settings.</p>
+      <input type="password" id="new-pin" inputmode="numeric" pattern="[0-9]*"
+        maxlength="8" placeholder="New PIN (4–8 digits)"
+        class="input input-bordered w-full">
+      <p class="text-xs opacity-60">Leave blank to keep the current PIN.
+        Applied when you save.</p>
     </div>
   </div>
 
@@ -177,12 +203,61 @@ document.getElementById('night-brightness').addEventListener('input', e => {
   document.getElementById('nb-val').textContent = e.target.value + '%';
 });
 
+// ── PIN lock ────────────────────────────────────────────
+let pinRequired = false;
+const getPin = () => sessionStorage.getItem('clockPin') || '';
+
+async function verifyPin(pin) {
+  const res = await fetch('/api/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin }),
+  });
+  return res.json();
+}
+
+async function gate() {
+  try {
+    const v = await verifyPin(getPin());
+    pinRequired = v.required;
+    if (v.ok) {
+      document.getElementById('lock-screen').style.display = 'none';
+      load();
+    } else {
+      document.getElementById('lock-screen').style.display = 'flex';
+    }
+  } catch (e) {
+    setStatus('offline', 'badge-error');
+    toast('Could not reach the clock', false);
+  }
+}
+
+document.getElementById('lock-unlock').addEventListener('click', async () => {
+  const pin = document.getElementById('lock-pin').value.trim();
+  const v = await verifyPin(pin);
+  if (v.ok) {
+    sessionStorage.setItem('clockPin', pin);
+    document.getElementById('lock-error').style.display = 'none';
+    document.getElementById('lock-screen').style.display = 'none';
+    load();
+  } else {
+    document.getElementById('lock-error').style.display = 'block';
+    document.getElementById('lock-pin').value = '';
+  }
+});
+document.getElementById('lock-pin').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('lock-unlock').click();
+});
+
 // ── Load / save ─────────────────────────────────────────
 async function load() {
   try {
     const res = await fetch('/api/config', { cache: 'no-store' });
     cfg = await res.json();
     renderMessage(); renderAlarms(); renderNight();
+    document.getElementById('pin-status').textContent = pinRequired
+      ? 'PIN is set. Enter a new one below to change it.'
+      : 'No PIN set — anyone on the WiFi can change settings.';
     setStatus('connected', 'badge-success');
   } catch (e) {
     setStatus('offline', 'badge-error');
@@ -198,21 +273,38 @@ document.getElementById('save').addEventListener('click', async () => {
   };
   cfg.nightBrightness = Number(document.getElementById('night-brightness').value) / 100;
   cfg.nightFadeMins   = Number(document.getElementById('night-fade').value) || 0;
+  const newPin = document.getElementById('new-pin').value.trim();
+  if (newPin) cfg.settingsPin = newPin;
+  else delete cfg.settingsPin;   // server keeps the stored PIN
   try {
     const res = await fetch('/api/config', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Clock-Pin': getPin() },
       body: JSON.stringify(cfg),
     });
     const out = await res.json();
-    if (out.ok) toast('Saved — clock updates within 30s');
-    else toast(out.error || 'Save failed', false);
+    if (out.ok) {
+      if (newPin) {
+        sessionStorage.setItem('clockPin', newPin);
+        pinRequired = true;
+        document.getElementById('new-pin').value = '';
+        document.getElementById('pin-status').textContent =
+          'PIN is set. Enter a new one below to change it.';
+      }
+      toast('Saved — clock updates within 30s');
+    } else if (res.status === 403) {
+      toast('Wrong PIN', false);
+      sessionStorage.removeItem('clockPin');
+      document.getElementById('lock-screen').style.display = 'flex';
+    } else {
+      toast(out.error || 'Save failed', false);
+    }
   } catch (e) {
     toast('Could not reach the clock', false);
   }
 });
 
-load();
+gate();
 </script>
 </body>
 </html>
