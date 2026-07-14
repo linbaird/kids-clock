@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="cupcake">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kids Clock Settings</title>
+<link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.23/dist/full.min.css" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { -webkit-tap-highlight-color: transparent; }
+  .day-btn { width: 2.4rem; }
+</style>
+</head>
+<body class="min-h-screen bg-base-200 pb-28">
+
+<div class="navbar bg-base-100 shadow-sm sticky top-0 z-10">
+  <div class="flex-1 px-2">
+    <span class="text-lg font-bold">🕐 Kids Clock Settings</span>
+  </div>
+  <div class="flex-none px-2">
+    <span id="status-dot" class="badge badge-ghost">loading…</span>
+  </div>
+</div>
+
+<main class="max-w-md mx-auto p-4 space-y-4">
+
+  <!-- ── Message to the clock ── -->
+  <div class="card bg-base-100 shadow-sm">
+    <div class="card-body p-5 gap-3">
+      <h2 class="card-title text-base">Message on the clock</h2>
+      <textarea id="msg-text" class="textarea textarea-bordered w-full" rows="2"
+        maxlength="90" placeholder="e.g. Happy birthday Ruby! 
+Love Mum &amp; Dad"></textarea>
+      <label class="label cursor-pointer justify-start gap-3 p-0">
+        <input type="checkbox" id="msg-enabled" class="toggle toggle-primary">
+        <span class="label-text">Show on the clock</span>
+      </label>
+      <p class="text-xs opacity-60">Appears in the right-hand column within
+        about 30 seconds. Untick to hide it again.</p>
+    </div>
+  </div>
+
+  <!-- ── Alarms ── -->
+  <div class="card bg-base-100 shadow-sm">
+    <div class="card-body p-5 gap-4">
+      <h2 class="card-title text-base">Alarms</h2>
+      <div id="alarm-list" class="space-y-4"></div>
+      <button id="add-alarm" class="btn btn-outline btn-sm">+ Add alarm</button>
+    </div>
+  </div>
+
+  <!-- ── Night dimming ── -->
+  <div class="card bg-base-100 shadow-sm">
+    <div class="card-body p-5 gap-3">
+      <h2 class="card-title text-base">Night dimming</h2>
+      <label class="label p-0">
+        <span class="label-text">Night brightness: <b id="nb-val">35%</b></span>
+      </label>
+      <input type="range" id="night-brightness" class="range range-primary"
+        min="5" max="100" step="5">
+      <label class="label p-0 mt-1">
+        <span class="label-text">Fade in/out over
+          <input type="number" id="night-fade" class="input input-bordered input-xs w-16 mx-1"
+            min="0" max="60"> minutes</span>
+      </label>
+    </div>
+  </div>
+
+</main>
+
+<!-- Sticky save bar -->
+<div class="fixed bottom-0 left-0 right-0 p-4 bg-base-100 border-t border-base-300">
+  <div class="max-w-md mx-auto">
+    <button id="save" class="btn btn-primary w-full">Save to clock</button>
+  </div>
+</div>
+
+<div class="toast toast-top toast-center z-50" id="toast"></div>
+
+<script>
+const DAYS = ['mon','tue','wed','thu','fri','sat','sun'];
+const DAY_LABELS = { mon:'M', tue:'T', wed:'W', thu:'T', fri:'F', sat:'S', sun:'S' };
+
+const DEFAULT_SOUNDS = [
+  { level: 1, file: "alarm-1.mp3", volume: 0.2,  delay: 0   },
+  { level: 2, file: "alarm-2.mp3", volume: 0.45, delay: 180 },
+  { level: 3, file: "alarm-3.mp3", volume: 0.7,  delay: 300 },
+  { level: 4, file: "alarm-4.mp3", volume: 1.0,  delay: 420 },
+];
+
+let cfg = null;
+
+function toast(msg, ok = true) {
+  const el = document.getElementById('toast');
+  el.innerHTML = `<div class="alert ${ok ? 'alert-success' : 'alert-error'} shadow-lg py-2"><span>${msg}</span></div>`;
+  setTimeout(() => el.innerHTML = '', 2500);
+}
+
+function setStatus(text, cls) {
+  const dot = document.getElementById('status-dot');
+  dot.textContent = text;
+  dot.className = 'badge ' + cls;
+}
+
+// ── Render ──────────────────────────────────────────────
+function renderMessage() {
+  const m = cfg.message || {};
+  document.getElementById('msg-text').value = m.text || '';
+  document.getElementById('msg-enabled').checked = !!m.enabled;
+}
+
+function renderNight() {
+  const pct = Math.round((cfg.nightBrightness ?? 0.35) * 100);
+  document.getElementById('night-brightness').value = pct;
+  document.getElementById('nb-val').textContent = pct + '%';
+  document.getElementById('night-fade').value = cfg.nightFadeMins ?? 10;
+}
+
+function renderAlarms() {
+  const list = document.getElementById('alarm-list');
+  list.innerHTML = '';
+  (cfg.alarms || []).forEach((al, i) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'border border-base-300 rounded-xl p-4 space-y-3';
+    wrap.innerHTML = `
+      <div class="flex items-center gap-2">
+        <input type="checkbox" class="toggle toggle-success toggle-sm al-enabled"
+          ${al.enabled ? 'checked' : ''}>
+        <input type="text" class="input input-bordered input-sm flex-1 al-label"
+          value="${(al.label || '').replace(/"/g,'&quot;')}" placeholder="Alarm name">
+        <button class="btn btn-ghost btn-sm text-error al-delete">✕</button>
+      </div>
+      <input type="time" class="input input-bordered w-full text-2xl h-14 al-time"
+        value="${al.time || '07:00'}">
+      <div class="flex gap-1.5 justify-between">
+        ${DAYS.map(d => `
+          <button class="btn btn-xs btn-circle day-btn al-day ${
+            (al.days || []).includes(d) ? 'btn-primary' : 'btn-ghost border border-base-300'
+          }" data-day="${d}">${DAY_LABELS[d]}</button>`).join('')}
+      </div>`;
+
+    wrap.querySelector('.al-enabled').addEventListener('change', e => al.enabled = e.target.checked);
+    wrap.querySelector('.al-label').addEventListener('input',  e => al.label = e.target.value);
+    wrap.querySelector('.al-time').addEventListener('change',  e => al.time = e.target.value);
+    wrap.querySelector('.al-delete').addEventListener('click', () => {
+      cfg.alarms.splice(i, 1);
+      renderAlarms();
+    });
+    wrap.querySelectorAll('.al-day').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const d = btn.dataset.day;
+        al.days = al.days || [];
+        if (al.days.includes(d)) al.days = al.days.filter(x => x !== d);
+        else al.days.push(d);
+        renderAlarms();
+      });
+    });
+    list.appendChild(wrap);
+  });
+}
+
+document.getElementById('add-alarm').addEventListener('click', () => {
+  cfg.alarms = cfg.alarms || [];
+  cfg.alarms.push({
+    id: Date.now(),
+    label: 'New alarm',
+    time: '07:00',
+    days: ['mon','tue','wed','thu','fri'],
+    sounds: JSON.parse(JSON.stringify(
+      (cfg.alarms[0] && cfg.alarms[0].sounds) || DEFAULT_SOUNDS)),
+    enabled: true,
+  });
+  renderAlarms();
+});
+
+document.getElementById('night-brightness').addEventListener('input', e => {
+  document.getElementById('nb-val').textContent = e.target.value + '%';
+});
+
+// ── Load / save ─────────────────────────────────────────
+async function load() {
+  try {
+    const res = await fetch('/api/config', { cache: 'no-store' });
+    cfg = await res.json();
+    renderMessage(); renderAlarms(); renderNight();
+    setStatus('connected', 'badge-success');
+  } catch (e) {
+    setStatus('offline', 'badge-error');
+    toast('Could not reach the clock', false);
+  }
+}
+
+document.getElementById('save').addEventListener('click', async () => {
+  if (!cfg) return;
+  cfg.message = {
+    text: document.getElementById('msg-text').value.trim(),
+    enabled: document.getElementById('msg-enabled').checked,
+  };
+  cfg.nightBrightness = Number(document.getElementById('night-brightness').value) / 100;
+  cfg.nightFadeMins   = Number(document.getElementById('night-fade').value) || 0;
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    });
+    const out = await res.json();
+    if (out.ok) toast('Saved — clock updates within 30s');
+    else toast(out.error || 'Save failed', false);
+  } catch (e) {
+    toast('Could not reach the clock', false);
+  }
+});
+
+load();
+</script>
+</body>
+</html>
