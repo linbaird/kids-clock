@@ -18,11 +18,75 @@ import json
 import os
 import shutil
 import tempfile
+import threading
+import time
+import urllib.request
+from datetime import date, datetime, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+# Calendar support needs two small libraries for recurring events
+# (weekly activities, yearly birthdays). On the Pi:
+#   sudo pip3 install icalendar recurring-ical-events --break-system-packages
+# Without them the server still runs; only /api/events is disabled.
+try:
+    import icalendar
+    import recurring_ical_events
+    HAVE_ICAL = True
+except ImportError:
+    HAVE_ICAL = False
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, 'config.json')
 PORT        = 8000
+
+EVENTS = {'events': [], 'error': None, 'fetched': None}
+EVENTS_REFRESH_SECS = 15 * 60
+
+
+def read_config():
+    try:
+        with open(CONFIG_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def refresh_events():
+    """Fetch the secret iCal URL and cache today's + tomorrow's events."""
+    cal = read_config().get('calendar') or {}
+    url, enabled = cal.get('icsUrl') or '', bool(cal.get('enabled'))
+    if not (url and enabled):
+        EVENTS.update(events=[], error=None)
+        return
+    if not HAVE_ICAL:
+        EVENTS.update(events=[], error='calendar libraries not installed')
+        return
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'kids-clock'})
+        data = urllib.request.urlopen(req, timeout=20).read()
+        ics = icalendar.Calendar.from_ical(data)
+        start = date.today()
+        found = recurring_ical_events.of(ics).between(start, start + timedelta(days=2))
+        out = []
+        for ev in found:
+            title = str(ev.get('SUMMARY') or 'Event')
+            dt = ev.get('DTSTART').dt
+            if isinstance(dt, datetime):
+                local = dt.astimezone() if dt.tzinfo else dt
+                out.append({'date': local.date().isoformat(),
+                            'time': local.strftime('%H:%M'), 'title': title})
+            else:  # all-day event (birthdays)
+                out.append({'date': dt.isoformat(), 'time': None, 'title': title})
+        out.sort(key=lambda e: (e['date'], e['time'] or ''))
+        EVENTS.update(events=out, error=None, fetched=time.time())
+    except Exception as e:
+        EVENTS.update(error=f'{type(e).__name__}: {e}')
+
+
+def events_loop():
+    while True:
+        refresh_events()
+        time.sleep(EVENTS_REFRESH_SECS)
 
 
 def validate_config(data):
@@ -95,12 +159,16 @@ class Handler(SimpleHTTPRequestHandler):
         path = self.path.split('?')[0]
         if path == '/api/config':
             try:
-                with open(CONFIG_PATH) as f:
-                    cfg = json.load(f)
+                cfg = read_config()
                 cfg.pop('settingsPin', None)   # never leak the PIN
+                cal = cfg.get('calendar')
+                if isinstance(cal, dict):      # ...or the secret calendar URL
+                    cal['configured'] = bool(cal.pop('icsUrl', None))
                 self._send_json(cfg)
             except Exception as e:
                 self._send_json({'error': f'cannot read config: {e}'}, 500)
+        elif path == '/api/events':
+            self._send_json({'available': HAVE_ICAL, **EVENTS})
         elif path == '/':
             self.send_response(302)
             self.send_header('Location', '/kids-clock.html')
@@ -117,13 +185,9 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json({'error': 'invalid JSON'}, 400)
             return
 
-        # Current stored PIN (may be absent = lock not set up yet)
-        stored_pin = None
-        try:
-            with open(CONFIG_PATH) as f:
-                stored_pin = json.load(f).get('settingsPin')
-        except Exception:
-            pass
+        # Current stored config (PIN + secret calendar URL live here)
+        stored = read_config()
+        stored_pin = stored.get('settingsPin')
 
         if path == '/api/verify':
             # Used by settings.html's lock screen
@@ -159,14 +223,32 @@ class Handler(SimpleHTTPRequestHandler):
         elif stored_pin:
             data['settingsPin'] = stored_pin
 
+        # Calendar: GET strips the secret URL, so preserve the stored
+        # one unless a replacement is supplied. 'configured' is a
+        # derived display field — never store it.
+        cal_in = data.get('calendar')
+        if isinstance(cal_in, dict):
+            cal_in.pop('configured', None)
+            new_url = cal_in.get('icsUrl')
+            if new_url:
+                if not (isinstance(new_url, str) and new_url.startswith('http')):
+                    self._send_json({'error': 'calendar URL must start with http'}, 400)
+                    return
+            else:
+                cal_in['icsUrl'] = (stored.get('calendar') or {}).get('icsUrl', '')
+
         err = validate_config(data)
         if err:
             self._send_json({'error': err}, 400)
             return
         try:
             save_config(data)
+            threading.Thread(target=refresh_events, daemon=True).start()
             saved = dict(data)
             saved.pop('settingsPin', None)
+            if isinstance(saved.get('calendar'), dict):
+                saved['calendar'] = {k: v for k, v in saved['calendar'].items()
+                                     if k != 'icsUrl'}
             self._send_json({'ok': True, 'config': saved})
         except Exception as e:
             self._send_json({'error': f'save failed: {e}'}, 500)
@@ -178,6 +260,10 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 if __name__ == '__main__':
+    threading.Thread(target=events_loop, daemon=True).start()
+    if not HAVE_ICAL:
+        print('NOTE: calendar disabled — run: '
+              'sudo pip3 install icalendar recurring-ical-events --break-system-packages')
     server = ThreadingHTTPServer(('0.0.0.0', PORT), Handler)
     print(f'Kids Clock server on http://0.0.0.0:{PORT} (serving {BASE_DIR})')
     server.serve_forever()

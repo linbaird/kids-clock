@@ -87,8 +87,31 @@ Love Mum &amp; Dad"></textarea>
         <input type="checkbox" id="btns-visible" class="toggle toggle-primary">
         <span class="label-text">Show theme &amp; dark-mode buttons on the clock</span>
       </label>
+      <label class="label cursor-pointer justify-start gap-3 p-0">
+        <input type="checkbox" id="words-visible" class="toggle toggle-primary">
+        <span class="label-text">Show the time in words ("Half Past Seven")</span>
+      </label>
       <p class="text-xs opacity-60">Hide the buttons to stop little fingers
         changing things — everything stays changeable from this page.</p>
+    </div>
+  </div>
+
+  <!-- ── Family calendar ── -->
+  <div class="card bg-base-100 shadow-sm">
+    <div class="card-body p-5 gap-3">
+      <h2 class="card-title text-base">Family calendar</h2>
+      <label class="label cursor-pointer justify-start gap-3 p-0">
+        <input type="checkbox" id="cal-enabled" class="toggle toggle-primary">
+        <span class="label-text">Show today's events on the clock</span>
+      </label>
+      <input type="url" id="cal-url" class="input input-bordered w-full text-xs"
+        placeholder="Paste secret iCal address (https://…basic.ics)">
+      <p class="text-xs" id="cal-status"></p>
+      <p class="text-xs opacity-60">Google Calendar (on a computer) →
+        Settings → click your calendar → <b>Integrate calendar</b> → copy the
+        <b>Secret address in iCal format</b>. Leave the box blank to keep the
+        current link. Anyone with this link can read the calendar, so the
+        clock never shares it back out.</p>
     </div>
   </div>
 
@@ -178,6 +201,14 @@ function renderClock() {
   document.getElementById('cfg-mode').value =
     ['auto','light','dark'].includes(cfg.mode) ? cfg.mode : 'auto';
   document.getElementById('btns-visible').checked = cfg.showClockButtons !== false;
+  document.getElementById('words-visible').checked = cfg.showTimeWords !== false;
+  const cal = cfg.calendar || {};
+  document.getElementById('cal-enabled').checked = !!cal.enabled;
+  document.getElementById('cal-url').value = '';
+  document.getElementById('cal-status').textContent = cal.configured
+    ? '✓ Calendar linked.' : 'No calendar linked yet.';
+  document.getElementById('cal-status').className =
+    'text-xs ' + (cal.configured ? 'text-success' : 'opacity-60');
 }
 
 function renderAlarms() {
@@ -314,6 +345,10 @@ document.getElementById('save').addEventListener('click', async () => {
   cfg.theme = document.getElementById('cfg-theme').value;
   cfg.mode  = document.getElementById('cfg-mode').value;
   cfg.showClockButtons = document.getElementById('btns-visible').checked;
+  cfg.showTimeWords    = document.getElementById('words-visible').checked;
+  const calUrl = document.getElementById('cal-url').value.trim();
+  cfg.calendar = { enabled: document.getElementById('cal-enabled').checked };
+  if (calUrl) cfg.calendar.icsUrl = calUrl;
   const newPin = document.getElementById('new-pin').value.trim();
   if (newPin) cfg.settingsPin = newPin;
   else delete cfg.settingsPin;   // server keeps the stored PIN
